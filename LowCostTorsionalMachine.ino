@@ -1,6 +1,6 @@
 #include <Wire.h>
 #include <CytronMotorDriver.h>
-#include <SparkFun_Qwiic_Scale.h> //currently throwing error
+#include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h" //assuming the NAU7802 is being used as the qwiic scale
 
 // Define motor and rotary encoder pins.. Pretty sure these are the correct pin numbers but maybe paired incorrectly
 //#define MOTOR_A 4
@@ -9,8 +9,8 @@
 #define ENC_B 2
 #define AVG_SIZE 10
 
-CytronMD motor(PWM_DIR, 3, 4)
-QwiicScale myScale;
+CytronMD motor(PWM_DIR, 3, 4);
+NAU7802 myScale; //Create instance of the NAU7802 class
 
 unsigned long _lastIncReadTime = micros(); 
 unsigned long _lastDecReadTime = micros(); 
@@ -40,7 +40,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_B), read_encoder, CHANGE);
 
   // Start the serial monitor to show output
-  Serial.begin(115200);
+  Serial.begin(115200); // value is 115,200 bits per second. faster communication
 }
 
 void loop() {
