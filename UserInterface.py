@@ -8,7 +8,7 @@ import random
 root = tk.Tk()
 root.title("Torsional Testing Machine Control System")
 root.configure(bg="black")
-root.geometry("900x500")
+root.geometry("1284x864") #standard 13x9 window
 
 # Label, Button, and Entry styles
 label_style = {"bg": "black", "fg": "white", "font": ("Arial", 12)}
