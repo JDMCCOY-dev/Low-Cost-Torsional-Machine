@@ -1,37 +1,29 @@
-#include <Wire.h>
 #include <CytronMotorDriver.h>
-#include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h" //assuming the NAU7802 is being used as the qwiic scale
+#include <Wire.h>
+#include <SparkFun_Qwiic_Scale_NAU7802.h>
 
-// Define motor and rotary encoder pins.. Pretty sure these are the correct pin numbers but maybe paired incorrectly
-//#define MOTOR_A 4
-//#define MOTOR_B 5
-#define ENC_A 1
+//Configure motor driver. 
+CytronMD motor(PWM_DIR, 5, 4);
+
+// Qwiic Scale Setup
+NAU7802 qwiicScale;
+
+// Define rotary encoder pins
+#define ENC_A 3
 #define ENC_B 2
-#define AVG_SIZE 10
 
-CytronMD motor(PWM_DIR, 3, 4);
-NAU7802 myScale; //Create instance of the NAU7802 class
-
+// Used in Encoder function
 unsigned long _lastIncReadTime = micros(); 
 unsigned long _lastDecReadTime = micros(); 
 int _pauseLength = 25000;
 int _fastIncrement = 10;
 
+
 volatile int counter = 0;
 
 void setup() {
-  // put your setup code here, to run once:
-
-  // Global initializers
-  _lastIncReadTime = micros();
-  if (!myScale.begin()) {
-    Serial.println("Scale initialization failed.");
-    while (1);
-  }
-
-  //Set motor pins
-  //pinMode(MOTOR_A, OUTPUT);
-  //pinMode(MOTOR_B, OUTPUT);
+  // Start the serial monitor to show output
+  Serial.begin(115200);
 
   // Set encoder pins and attach interrupts
   pinMode(ENC_A, INPUT_PULLUP);
@@ -39,51 +31,35 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B), read_encoder, CHANGE);
 
-  // Start the serial monitor to show output
-  Serial.begin(115200); // value is 115,200 bits per second. faster communication
+  // Qwiic Scale Setup
+    Wire.begin();
+    if (qwiicScale.begin() == false) {
+        Serial.println("Qwiic Scale not detected!");
+    } else {
+        qwiicScale.calculateZeroOffset();
+        qwiicScale.setGain(NAU7802_GAIN_128);
+    }
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  static int lastCounter = 0;
 
-  //Coding for Reading the Torque Cell
-  int32_t currentReading = myScale.getReading();
-  float currentWeight = myScale.getWeight();
+  // If count has changed, update motor speed and print value
+  if(counter != lastCounter){
+    float position = counter * 0.018347168;  // Convert encoder count to position
+    int speed = map(counter, -100, 100, -255, 255);  // Map encoder count to motor speed range (-255 to 255)
 
-  Serial.print("Reading: ");
-  Serial.print(currentReading);
-  Serial.print("\tWeight: ");
-  Serial.print(currentWeight, 2); //Print 2 decimal places
+    motor.setSpeed(speed);  // Set motor speed
 
-  int avgWeightSpot = 0;
-  float avgWeights[AVG_SIZE];
-  avgWeights[avgWeightSpot++] = currentWeight;
-  if (avgWeightSpot == AVG_SIZE) avgWeightSpot = 0;
-
-  float avgWeight = 0;
-  for (int x = 0; x < AVG_SIZE; x++)
-    avgWeight += avgWeights[x];
-  avgWeight /= AVG_SIZE;
-
-  Serial.print("\tAvgWeight: ");
-  Serial.print(avgWeight, 2); //Print 2 decimal places
-
-  // Coding for Motor Control and Rotary Encoder
-  int angle = 0;
-  while (angle < 360) {
-    static int lastCounter = 0;
-    motor.setSpeed(0);
-
-    // If count has changed print the new value to serial
-    if (counter != lastCounter) {
-      angle = counter * 0.18;
-      Serial.println(angle);
-      Serial.println(counter);
-      Serial.println(micros());
-      lastCounter - counter;
-    }
+    Serial.print("Position: ");
+    Serial.println(position);
+    Serial.print("Motor Speed: ");
+    Serial.println(speed);
+    
+    lastCounter = counter;
   }
 }
+
 
 void read_encoder() {
   // Encoder interrupt routine for both pins. Updates counter
