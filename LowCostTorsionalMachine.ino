@@ -1,37 +1,36 @@
-#include <Wire.h>
 #include <CytronMotorDriver.h>
-#include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h" //assuming the NAU7802 is being used as the qwiic scale
+#include <Wire.h>
+#include <SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h>
 
-// Define motor and rotary encoder pins.. Pretty sure these are the correct pin numbers but maybe paired incorrectly
-//#define MOTOR_A 4
-//#define MOTOR_B 5
-#define ENC_A 1
+//Configure motor driver. 
+CytronMD motor(PWM_DIR, 5, 4);
+
+// Qwiic Scale Setup
+NAU7802 qwiicScale;
+
+// Define rotary encoder pins
+#define ENC_A 3
 #define ENC_B 2
-#define AVG_SIZE 10
 
-CytronMD motor(PWM_DIR, 3, 4);
-NAU7802 myScale; //Create instance of the NAU7802 class
-
+// Used in Encoder function
+volatile int counter = 0;
 unsigned long _lastIncReadTime = micros(); 
 unsigned long _lastDecReadTime = micros(); 
 int _pauseLength = 25000;
 int _fastIncrement = 10;
 
-volatile int counter = 0;
+// Control Variables for Serial functionality
+float position = 0.0;
+float targetAngle = 0.0;
+float speedDegPerMin = 0.0;
+bool testRunning = false;
+bool directionClockwise = true;
+unsigned long lastDataSendTime = 0;
+const unsigned long dataInterval = 5000; // unit is ms.. controls rate of angle/torque data output
 
 void setup() {
-  // put your setup code here, to run once:
-
-  // Global initializers
-  _lastIncReadTime = micros();
-  if (!myScale.begin()) {
-    Serial.println("Scale initialization failed.");
-    while (1);
-  }
-
-  //Set motor pins
-  //pinMode(MOTOR_A, OUTPUT);
-  //pinMode(MOTOR_B, OUTPUT);
+  // Start the serial monitor to show output
+  Serial.begin(9600);
 
   // Set encoder pins and attach interrupts
   pinMode(ENC_A, INPUT_PULLUP);
@@ -39,52 +38,90 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B), read_encoder, CHANGE);
 
-  // Start the serial monitor to show output
-  Serial.begin(115200); // value is 115,200 bits per second. faster communication
+  // Qwiic Scale Setup
+    Wire.begin();
+    // short hand for if qwiicscale is not true or == false
+    if (!qwiicScale.begin()) {
+        Serial.println("Qwiic Scale not detected!");
+    } else {
+        qwiicScale.calculateZeroOffset();
+        qwiicScale.setGain(NAU7802_GAIN_128);
+        Serial.println("Qwiic Scale ready");
+    }
+
+    // Final Status confirmation
+    Serial.println("System Ready");
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  handleSerial();
 
-  //Coding for Reading the Torque Cell
-  int32_t currentReading = myScale.getReading();
-  float currentWeight = myScale.getWeight();
+  position = counter * 0.018347168;  // Convert encoder count to degrees
 
-  Serial.print("Reading: ");
-  Serial.print(currentReading);
-  Serial.print("\tWeight: ");
-  Serial.print(currentWeight, 2); //Print 2 decimal places
+  if (testRunning) {
+    // Check if target reached
+    if ((directionClockwise && position >= targetAngle) ||
+        (!directionClockwise && position <= -targetAngle)) {
+      motor.setSpeed(0);
+      testRunning = false;
+      Serial.println("Reached target angle. Test complete.");
+    } else {
+      int speedPWM = (directionClockwise ? 1 : -1) * constrain(map(speedDegPerMin, 0, 180, 90, 255), 90, 255);
+      motor.setSpeed(speedPWM);
+    }
+  }
 
-  int avgWeightSpot = 0;
-  float avgWeights[AVG_SIZE];
-  avgWeights[avgWeightSpot++] = currentWeight;
-  if (avgWeightSpot == AVG_SIZE) avgWeightSpot = 0;
+  // Periodic data print
+  if (millis() - lastDataSendTime >= dataInterval) {
+    Serial.print("ANGLE:");
+    Serial.print(position, 2);
+    Serial.print(",TORQUE:");
+    Serial.println(qwiicScale.getReading());
+    lastDataSendTime = millis();
+  }
+}
 
-  float avgWeight = 0;
-  for (int x = 0; x < AVG_SIZE; x++)
-    avgWeight += avgWeights[x];
-  avgWeight /= AVG_SIZE;
+void handleSerial() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
 
-  Serial.print("\tAvgWeight: ");
-  Serial.print(avgWeight, 2); //Print 2 decimal places
-
-  // Coding for Motor Control and Rotary Encoder
-  int angle = 0;
-  while (angle < 360) {
-    static int lastCounter = 0;
-    motor.setSpeed(0);
-
-    // If count has changed print the new value to serial
-    if (counter != lastCounter) {
-      angle = counter * 0.18;
-      Serial.println(angle);
-      Serial.println(counter);
-      Serial.println(micros());
-      lastCounter - counter;
+    if (cmd.startsWith("SET ANGLE")) {
+      targetAngle = cmd.substring(10).toFloat();
+      Serial.print("Target Angle Set to: ");
+      Serial.println(targetAngle);
+    } 
+    else if (cmd.startsWith("SET SPEED")) {
+      speedDegPerMin = cmd.substring(10).toFloat();
+      Serial.print("Target Speed Set to: ");
+      Serial.print(speedDegPerMin);
+      Serial.println(" deg/min");
+    } 
+    else if (cmd.startsWith("DIRECTION")) {
+      if (cmd.endsWith("CW")) directionClockwise = true;
+      else if (cmd.endsWith("CCW")) directionClockwise = false;
+      Serial.print("Direction Set: ");
+      Serial.println(directionClockwise ? "Clockwise" : "Counter-Clockwise");
+    }
+    else if (cmd == "START") {
+      counter = 0; // Reset encoder for new test
+      position = 0;
+      testRunning = true;
+      Serial.println("Test started");
+    } 
+    else if (cmd == "STOP") {
+      testRunning = false;
+      motor.setSpeed(0);
+      Serial.println("Test stopped");
+    } 
+    else if (cmd == "TARE") {
+      qwiicScale.calculateZeroOffset();
+      Serial.println("Scale tared");
     }
   }
 }
 
+// Pulled from folder sent from Dr. Elder.. encoder interrupt handler
 void read_encoder() {
   // Encoder interrupt routine for both pins. Updates counter
   // if they are valid and have rotated a full indent
