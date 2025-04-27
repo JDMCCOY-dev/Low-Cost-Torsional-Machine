@@ -4,6 +4,59 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import random
 
+
+# Button Functions
+
+# Define Start Button Function
+def start_machine():
+    print("start button placeholder") # replace with functionality
+
+# Define Stop Button Fucntion
+def stop_machine():
+    print("stop button placeholder") # replace with functionality
+
+# Define Home Button Function
+def home_machine():
+    print("Machine returning to home position...")  # Replace with actual machine reset logic
+
+# Define Home Button Function
+def save_data():
+    print("save data placeholder")  # Replace with functionality
+
+# Define Direction of Rotation Functions
+def cw_set():
+    print("cw button placeholder") # Replace with functionality
+
+def ccw_set():
+    print("ccw button placeholder") # Replace with functionality
+
+# Define Tare Buttons Functions
+def tare_angle():
+    print("tare angle placeholder") # Replace with functionality
+
+def tare_speed():
+    print("tare speed placeholder") # Replace with functionality
+
+def tare_torque():
+    print("tare torque placeholder") # Replace with functionality
+
+# Toggle Function for Graph/Table
+def toggle_view():
+    global is_graph  # Fixes missing variable reference
+    if is_graph:
+        canvas_widget.pack_forget()
+        table.pack(fill=tk.BOTH, expand=True)
+        toggle_button.config(text="Switch To Graph")
+    else:
+        table.pack_forget()
+        canvas_widget.pack(fill=tk.BOTH, expand=True)
+        toggle_button.config(text="Switch To Table")
+    is_graph = not is_graph
+
+
+
+# GUI Code
+
 # Create main window
 root = tk.Tk()
 root.title("Torsional Testing Machine Control System")
@@ -27,10 +80,10 @@ tk.Label(root, text="Direction of Twist (cw/ccw):", **label_style).grid(row=1, c
 direction_frame = tk.Frame(root, bg="black")
 direction_frame.grid(row=2, column=0, sticky="w", padx=20, pady=5)
 
-cw_button = tk.Button(direction_frame, text="Clockwise", **button_style, borderwidth=4, highlightthickness=0)
+cw_button = tk.Button(direction_frame, text="Clockwise", **button_style, borderwidth=4, highlightthickness=0, command=cw_set)
 cw_button.pack(side=tk.LEFT, ipadx=30)  # Expand width but no space between
 
-ccw_button = tk.Button(direction_frame, text="Counter-clockwise", **button_style, borderwidth=4, highlightthickness=0)
+ccw_button = tk.Button(direction_frame, text="Counter-clockwise", **button_style, borderwidth=4, highlightthickness=0, command=ccw_set)
 ccw_button.pack(side=tk.LEFT, ipadx=30)  # Matches CW width, no space
 
 # Input Fields with Tare Buttons
@@ -40,6 +93,7 @@ labels = [
     "Torque Loss % to trigger Breakpoint:",
 ]
 entries = []
+num = 0 # iterator for tare_button definitions
 for i, text in enumerate(labels):
     tk.Label(root, text=text, **label_style).grid(row=i + 3, column=0, sticky="w", padx=20, pady=5)
     
@@ -47,21 +101,25 @@ for i, text in enumerate(labels):
     entry.grid(row=i + 3, column=1, pady=5)
     entries.append(entry)
     
-    tare_button = tk.Button(root, text="Tare", **button_style)  
+    # iterator used to set command for each instance of tare button
+    if num == 0:
+        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_angle)  
+    elif num == 1:
+        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_speed)  
+    elif num == 2:
+        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_torque)  
     tare_button.grid(row=i + 3, column=2, padx=10, pady=5)
 
-# Define Home Button Function
-def home_machine():
-    print("Machine returning to home position...")  # Replace with actual machine reset logic
+    num += 1 # increment iterator
 
 # Frame for Start, Stop, and Home buttons
 start_stop_frame = tk.Frame(root, bg="black")
 start_stop_frame.grid(row=6, column=0, columnspan=3, pady=10, padx=20, sticky="w")
 
-start_button = tk.Button(start_stop_frame, text="Start Test", **button_style)
+start_button = tk.Button(start_stop_frame, text="Start Test", **button_style, command=start_machine)
 start_button.pack(side=tk.LEFT, padx=5) 
 
-stop_button = tk.Button(start_stop_frame, text="Stop Test", **button_style)
+stop_button = tk.Button(start_stop_frame, text="Stop Test", **button_style, command=stop_machine)
 stop_button.pack(side=tk.LEFT, padx=5)  
 
 home_button = tk.Button(start_stop_frame, text="Home", **button_style, command=home_machine)
@@ -81,7 +139,7 @@ measured_torque = tk.Label(root, text="(Real-time data will appear here)", **lab
 measured_torque.grid(row=16, column=1, sticky="w", pady=5)
 
 # Save Data Button
-save_button = tk.Button(root, text="Save Data", **button_style)
+save_button = tk.Button(root, text="Save Data", **button_style, command=save_data)
 save_button.grid(row=9, column=1, pady=10)
 
 # Graph/Table Toggle Frame
@@ -111,24 +169,13 @@ table.heading("Torque", text="Torque (Nm)")
 for angle, torque in zip(angles, torques):
     table.insert("", "end", values=(angle, round(torque, 2)))
 
-# Toggle Function for Graph/Table
-def toggle_view():
-    global is_graph  # Fixes missing variable reference
-    if is_graph:
-        canvas_widget.pack_forget()
-        table.pack(fill=tk.BOTH, expand=True)
-        toggle_button.config(text="Switch To Graph")
-    else:
-        table.pack_forget()
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
-        toggle_button.config(text="Switch To Table")
-    is_graph = not is_graph
-
 # Toggle Button (Now Centered Below Graph)
 is_graph = True  # Default view is graph
 toggle_button = tk.Button(root, text="Switch To Table", **button_style, command=toggle_view)
 toggle_button.grid(row=8, column=3, pady=10, padx=20)  # Centered below graph
 
+
 # Run the application
 root.mainloop()
+
 
