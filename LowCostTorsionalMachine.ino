@@ -27,6 +27,7 @@ bool testRunning = false;
 bool directionClockwise = true;
 unsigned long lastDataSendTime = 0;
 const unsigned long dataInterval = 5000; // unit is ms.. controls rate of angle/torque data output
+float calibrationFactor = 1.0; // Raw reading to torque scale (Nm)
 
 void setup() {
   // Start the serial monitor to show output
@@ -76,7 +77,7 @@ void loop() {
     Serial.print("ANGLE:");
     Serial.print(position, 2);
     Serial.print(",TORQUE:");
-    Serial.println(qwiicScale.getReading());
+    Serial.println(qwiicScale.getReading() * calibrationFactor, 5); // convert to N*m
     lastDataSendTime = millis();
   }
 }
@@ -98,8 +99,12 @@ void handleSerial() {
       Serial.println(" deg/min");
     } 
     else if (cmd.startsWith("DIRECTION")) {
-      if (cmd.endsWith("CW")) directionClockwise = true;
-      else if (cmd.endsWith("CCW")) directionClockwise = false;
+      if (cmd.endsWith("CCW")) {
+        directionClockwise = false;
+      }
+      else if (cmd.endsWith("CW")) {
+        directionClockwise = true;
+      }
       Serial.print("Direction Set: ");
       Serial.println(directionClockwise ? "Clockwise" : "Counter-Clockwise");
     }
@@ -115,8 +120,54 @@ void handleSerial() {
       Serial.println("Test stopped");
     } 
     else if (cmd == "TARE") {
-      qwiicScale.calculateZeroOffset();
-      Serial.println("Scale tared");
+      Serial.println("Smart Taring and Calibrating scale... please wait.");
+
+      long avgReading = 0;
+      int sampleCount = 64;
+      int validSamples = 0;
+
+      for (int i = 0; i < sampleCount; i++) {
+        while (qwiicScale.available() == false) {
+          // Wait until a new reading is ready
+        }
+        long reading = qwiicScale.getReading();
+        avgReading += reading;
+        validSamples++;
+        delay(5);
+      }
+
+      if (validSamples > 0) {
+        avgReading /= validSamples;
+        qwiicScale.setZeroOffset(avgReading);
+
+        Serial.print("Smart tare complete. New zero offset = ");
+        Serial.println(avgReading);
+
+        // --- NEW Calibration auto-setup ---
+        delay(100); // short wait
+
+        if (qwiicScale.available()) {
+          long postTareReading = qwiicScale.getReading(); // Read raw sensor output after tare
+          float knownTorque = 1.29; // Nm, your "expected" reading
+          if (postTareReading != 0) {
+            calibrationFactor = knownTorque / postTareReading; // Compute calibration
+            Serial.print("Auto-calibration complete. Calibration factor = ");
+            Serial.println(calibrationFactor, 8);
+          } else {
+            Serial.println("Post-tare reading was zero, skipping calibration.");
+          }
+        } else {
+          Serial.println("No valid reading after tare for calibration.");
+        }
+        // --- End NEW ---
+      } else {
+        Serial.println("Smart tare failed. No valid readings.");
+      }
+    }
+    else if (cmd.startsWith("SET CALIBRATION")) {
+      calibrationFactor = cmd.substring(16).toFloat();
+      Serial.print("Calibration factor set to: ");
+      Serial.println(calibrationFactor, 8);
     }
   }
 }
