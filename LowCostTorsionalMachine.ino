@@ -58,27 +58,35 @@ void loop() {
   handleSerial();
 
   position = counter * 0.018347168;  // Convert encoder count to degrees
+  float torque = qwiicScale.getReading() * calibrationFactor; // Read torque
 
   if (testRunning) {
-    // Check if target reached
-    if ((directionClockwise && position >= targetAngle) ||
+    // Check torque limit first
+    if (torque >= 145.0) {
+      motor.setSpeed(0);
+      testRunning = false;
+      Serial.println("Torque limit exceeded! Test Aborted.");
+    }
+    // Check if target angle reached
+    else if ((directionClockwise && position >= targetAngle) ||
         (!directionClockwise && position <= -targetAngle)) {
       motor.setSpeed(0);
       testRunning = false;
       Serial.println("Reached target angle. Test complete.");
-    } else {
+    }
+    else {
       int speedPWM = (directionClockwise ? 1 : -1) * constrain(map(speedDegPerMin, 0, 180, 90, 255), 90, 255);
       motor.setSpeed(speedPWM);
     }
-  }
 
-  // Periodic data print
-  if (millis() - lastDataSendTime >= dataInterval) {
-    Serial.print("ANGLE:");
-    Serial.print(position, 2);
-    Serial.print(",TORQUE:");
-    Serial.println(qwiicScale.getReading() * calibrationFactor, 5); // convert to N*m
-    lastDataSendTime = millis();
+    // Periodic data print
+    if (millis() - lastDataSendTime >= dataInterval) {
+      Serial.print("ANGLE:");
+      Serial.print(position, 2);
+      Serial.print(",TORQUE:");
+      Serial.println(qwiicScale.getReading() * calibrationFactor, 5); // convert to N*m
+      lastDataSendTime = millis();
+    }
   }
 }
 
