@@ -1,48 +1,156 @@
+
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, filedialog
+import serial
+import serial.tools.list_ports
+import threading
+import time
+import csv
+import os
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import random
+
+# ========== Global Variables ==========
+ser = None
+last_command_time = 0
+COMMAND_INTERVAL = 0.1  # seconds
+is_graph = True
+live_data = []  # Stores (angle, torque) tuples
+serial_connected = False
+test_active = False
+start_time = 0
+current_time = 0
+elapsed_time = 0
+file_data = []
+
+# ========== Serial Communication ==========
+def connect_serial():
+    global ser, serial_connected
+    try:
+        ports = list(serial.tools.list_ports.comports())
+        if not ports:
+            raise serial.SerialException("No serial devices found.")
+        port_name = ports[0].device
+        ser = serial.Serial(port_name, 9600, timeout=1)
+        serial_connected = True
+        serial_led.config(bg="green")
+        threading.Thread(target=read_serial_data, daemon=True).start()
+        print(f"Connected to {port_name}")
+    except serial.SerialException as e:
+        messagebox.showerror("Serial Error", f"Failed to connect to serial device:\n{e}")
+        ser = None
+        serial_connected = False
+        serial_led.config(bg="red")
+
+def send_serial_command(command):
+    global last_command_time
+    current_time = time.time()
+    if ser and (current_time - last_command_time >= COMMAND_INTERVAL):
+        try:
+            ser.write((command + '\n').encode())
+            last_command_time = current_time
+        except serial.SerialException:
+            messagebox.showerror("Serial Error", "Serial connection lost.")
+            ser.close()
+            serial_led.config(bg="red")
+
+def read_serial_data():
+    global ser
+    while True:
+        if ser and ser.in_waiting:
+            try:
+                line = ser.readline().decode().strip()
+                if line.startswith("ANGLE:"):
+                    parts = line.split(",")
+                    angle_val = float(parts[0].split(":")[1])
+                    torque_val = float(parts[1].split(":")[1])
+                    update_live_data(angle_val, torque_val)
+            except Exception as e:
+                print("Serial Read Error:", e)
+        time.sleep(0.05)
+
+# ========== Data Handling ==========
+def update_live_data(angle, torque):
+    live_data.append((angle, torque))
+    measured_twist.config(text=f"{angle:.2f} °")
+    measured_torque.config(text=f"{torque:.5f} Nm")
+    ax.cla()
+    ax.set_xlabel("Angle (degrees)")
+    ax.set_ylabel("Torque (Nm)")
+    angles, torques = zip(*live_data)
+    ax.plot(angles, torques, marker="o", color="blue")
+    canvas.draw()
+
+    # Update table
+    table.insert("", "end", values=(f"{angle:.2f}", f"{torque:.5f}"))
+
+    # Update data file
+    if test_active:
+        try:
+            global current_time
+            current_time = time.time()
+            global elapsed_time
+            elapsed_time = current_time - start_time
+            global file_data
+            file_data.append({"Time (seconds)": elapsed_time, "Angle (degrees)": angle, "Measured Torque (Nm)": torque})
+        except:
+            pass
 
 
-# Button Functions
-
-# Define Start Button Function
+# ========== GUI Functions ==========
 def start_machine():
-    print("start button placeholder") # replace with functionality
+    send_serial_command("START")
+    global file_data 
+    file_data = []
+    global start_time
+    start_time = time.time()
+    global test_active 
+    test_active = True
 
-# Define Stop Button Fucntion
 def stop_machine():
-    print("stop button placeholder") # replace with functionality
+    send_serial_command("STOP")
+    global test_active
+    test_active = False
 
-# Define Home Button Function
-def home_machine():
-    print("Machine returning to home position...")  # Replace with actual machine reset logic
-
-# Define Home Button Function
-def save_data():
-    print("save data placeholder")  # Replace with functionality
-
-# Define Direction of Rotation Functions
 def cw_set():
-    print("cw button placeholder") # Replace with functionality
+    send_serial_command("DIRECTION CW")
+    direction_status.config(text="Direction: Clockwise")
 
 def ccw_set():
-    print("ccw button placeholder") # Replace with functionality
+    send_serial_command("DIRECTION CCW")
+    direction_status.config(text="Direction: Counter-clockwise")
 
-# Define Tare Buttons Functions
-def tare_angle():
-    print("tare angle placeholder") # Replace with functionality
+def set_target_angle():
+    val = angle_entry.get()
+    try:
+        angle = float(val)
+        send_serial_command(f"SET ANGLE {angle}")
+        target_angle_label.config(text=f"{angle:.2f} °")
+    except ValueError:
+        messagebox.showwarning("Invalid Input", "Enter a valid angle.")
 
-def tare_speed():
-    print("tare speed placeholder") # Replace with functionality
+def set_target_speed():
+    val = speed_entry.get()
+    try:
+        speed = float(val)
+        send_serial_command(f"SET SPEED {speed}")
+        target_speed_label.config(text=f"{speed:.2f} °/min")
+    except ValueError:
+        messagebox.showwarning("Invalid Input", "Enter a valid speed.")
 
 def tare_torque():
-    print("tare torque placeholder") # Replace with functionality
+    send_serial_command("TARE")
 
-# Toggle Function for Graph/Table
+def set_calibration_factor():
+    val = calibration_entry.get()
+    try:
+        factor = float(val)
+        send_serial_command(f"SET CALIBRATION {factor}")
+    except ValueError:
+        messagebox.showwarning("Invalid Input", "Enter a valid number.")
+
 def toggle_view():
-    global is_graph  # Fixes missing variable reference
+    global is_graph
     if is_graph:
         canvas_widget.pack_forget()
         table.pack(fill=tk.BOTH, expand=True)
@@ -53,129 +161,121 @@ def toggle_view():
         toggle_button.config(text="Switch To Table")
     is_graph = not is_graph
 
+# Define Save Button Function
+def save_data():
+    file = filedialog.asksaveasfile(initialdir="Desktop",
+
+                                    defaultextension='.csv',
+
+                                    filetypes=[
+
+                                        (".csv file (.csv)", ".csv"),
+
+                                        ("Text file (.txt)",".txt"),
+
+                                        ("All files", ".*"),
+
+                                    ])
+
+    if file is None:
+        return
+    filename = os.path.basename(file.name)
+    with open(filename, "w", newline="") as csvfile:
+        fieldnames = ["Time (seconds)", "Angle (degrees)", "Measured Torque (Nm)"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(file_data)
 
 
-# GUI Code
-
-# Create main window
+# ========== GUI Setup ==========
 root = tk.Tk()
 root.title("Torsional Testing Machine Control System")
+root.geometry("1284x864")
 root.configure(bg="black")
-root.geometry("1284x864") #standard 13x9 window
-
-# Label, Button, and Entry styles
 label_style = {"bg": "black", "fg": "white", "font": ("Arial", 12)}
 button_style = {"bg": "white", "fg": "black", "font": ("Arial", 12, "bold")}
 entry_style = {"bg": "white", "fg": "black", "font": ("Arial", 12), "width": 25}
 
-# Title Label
-title_label = tk.Label(root, text="Torsional Testing Machine Control System", 
-                       bg="black", fg="white", font=("Arial", 16, "bold"))
-title_label.grid(row=0, column=0, columnspan=3, pady=10)
+# Title
+tk.Label(root, text="Torsional Testing Machine Control System", bg="black", fg="white", font=("Arial", 16, "bold")).grid(row=0, column=0, columnspan=4, pady=10)
 
-# Move Direction of Twist above Angle of Twist
-tk.Label(root, text="Direction of Twist (cw/ccw):", **label_style).grid(row=1, column=0, sticky="w", padx=20, pady=5)
+# Serial LED
+tk.Label(root, text="Arduino Status:", **label_style).grid(row=1, column=0, sticky="w", padx=20)
+serial_led = tk.Label(root, bg="red", width=2, height=1)
+serial_led.grid(row=1, column=1, sticky="w", pady=5)
 
-# Frame for CW & CCW Buttons (merged appearance)
+# Direction Controls
+tk.Label(root, text="Direction of Twist:", **label_style).grid(row=2, column=0, sticky="w", padx=20)
 direction_frame = tk.Frame(root, bg="black")
-direction_frame.grid(row=2, column=0, sticky="w", padx=20, pady=5)
+direction_frame.grid(row=2, column=1, pady=5)
+tk.Button(direction_frame, text="Clockwise", command=cw_set, **button_style).pack(side=tk.LEFT, padx=5)
+tk.Button(direction_frame, text="Counter-Clockwise", command=ccw_set, **button_style).pack(side=tk.LEFT, padx=5)
 
-cw_button = tk.Button(direction_frame, text="Clockwise", **button_style, borderwidth=4, highlightthickness=0, command=cw_set)
-cw_button.pack(side=tk.LEFT, ipadx=30)  # Expand width but no space between
+# Input Controls
+tk.Label(root, text="Target Angle (°):", **label_style).grid(row=3, column=0, sticky="w", padx=20)
+angle_entry = tk.Entry(root, **entry_style)
+angle_entry.grid(row=3, column=1)
+tk.Button(root, text="Set", command=set_target_angle, **button_style).grid(row=3, column=2, padx=10)
 
-ccw_button = tk.Button(direction_frame, text="Counter-clockwise", **button_style, borderwidth=4, highlightthickness=0, command=ccw_set)
-ccw_button.pack(side=tk.LEFT, ipadx=30)  # Matches CW width, no space
+tk.Label(root, text="Speed (°/min):", **label_style).grid(row=4, column=0, sticky="w", padx=20)
+speed_entry = tk.Entry(root, **entry_style)
+speed_entry.grid(row=4, column=1)
+tk.Button(root, text="Set", command=set_target_speed, **button_style).grid(row=4, column=2, padx=10)
 
-# Input Fields with Tare Buttons
-labels = [
-    "Angle of Twist (degrees):",
-    "Speed of Rotation (degrees/second):",
-    "Torque Loss % to trigger Breakpoint:",
-]
-entries = []
-num = 0 # iterator for tare_button definitions
-for i, text in enumerate(labels):
-    tk.Label(root, text=text, **label_style).grid(row=i + 3, column=0, sticky="w", padx=20, pady=5)
-    
-    entry = tk.Entry(root, **entry_style)
-    entry.grid(row=i + 3, column=1, pady=5)
-    entries.append(entry)
-    
-    # iterator used to set command for each instance of tare button
-    if num == 0:
-        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_angle)  
-    elif num == 1:
-        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_speed)  
-    elif num == 2:
-        tare_button = tk.Button(root, text="Tare", **button_style, command=tare_torque)  
-    tare_button.grid(row=i + 3, column=2, padx=10, pady=5)
+tk.Label(root, text="Calibration Factor:", **label_style).grid(row=5, column=0, sticky="w", padx=20)
+calibration_entry = tk.Entry(root, **entry_style)
+calibration_entry.grid(row=5, column=1)
+tk.Button(root, text="Set", command=set_calibration_factor, **button_style).grid(row=5, column=2, padx=10)
 
-    num += 1 # increment iterator
+tk.Button(root, text="Tare Torque", command=tare_torque, **button_style).grid(row=6, column=1, pady=10)
 
-# Frame for Start, Stop, and Home buttons
+# Start/Stop
 start_stop_frame = tk.Frame(root, bg="black")
-start_stop_frame.grid(row=6, column=0, columnspan=3, pady=10, padx=20, sticky="w")
+start_stop_frame.grid(row=7, column=0, columnspan=3, pady=10)
+tk.Button(start_stop_frame, text="Start Test", command=start_machine, **button_style).pack(side=tk.LEFT, padx=5)
+tk.Button(start_stop_frame, text="Stop Test", command=stop_machine, **button_style).pack(side=tk.LEFT, padx=5)
+tk.Button(start_stop_frame, text="Save Data", command=save_data, **button_style).pack(side=tk.LEFT, padx=5)
 
-start_button = tk.Button(start_stop_frame, text="Start Test", **button_style, command=start_machine)
-start_button.pack(side=tk.LEFT, padx=5) 
+# Live Data
+tk.Label(root, text="Measured Angle of Twist:", **label_style).grid(row=8, column=0, sticky="w", padx=20)
+measured_twist = tk.Label(root, text="0.00 °", **label_style)
+measured_twist.grid(row=8, column=1, sticky="w")
 
-stop_button = tk.Button(start_stop_frame, text="Stop Test", **button_style, command=stop_machine)
-stop_button.pack(side=tk.LEFT, padx=5)  
+tk.Label(root, text="Measured Torque:", **label_style).grid(row=9, column=0, sticky="w", padx=20)
+measured_torque = tk.Label(root, text="0.00000 Nm", **label_style)
+measured_torque.grid(row=9, column=1, sticky="w")
 
-home_button = tk.Button(start_stop_frame, text="Home", **button_style, command=home_machine)
-home_button.pack(side=tk.LEFT, padx=5)
+tk.Label(root, text="Target Angle:", **label_style).grid(row=10, column=0, sticky="w", padx=20)
+target_angle_label = tk.Label(root, text="0.00 °", **label_style)
+target_angle_label.grid(row=10, column=1, sticky="w")
 
-# Spacer row
-tk.Label(root, text="", bg="black").grid(row=13, column=0)  # Empty row
-tk.Label(root, text="", bg="black").grid(row=14, column=0)  # Another empty row
+tk.Label(root, text="Set Speed:", **label_style).grid(row=11, column=0, sticky="w", padx=20)
+target_speed_label = tk.Label(root, text="0.00 °/min", **label_style)
+target_speed_label.grid(row=11, column=1, sticky="w")
 
-# Measured Data
-tk.Label(root, text="Measured Angle of Twist (Degrees):", **label_style).grid(row=15, column=0, sticky="w", padx=20, pady=5)
-measured_twist = tk.Label(root, text="(Real-time data will appear here)", **label_style)
-measured_twist.grid(row=15, column=1, sticky="w", pady=5)
+direction_status = tk.Label(root, text="Direction: Not Set", **label_style)
+direction_status.grid(row=12, column=1, sticky="w", padx=10)
 
-tk.Label(root, text="Measured Torque (Nm):", **label_style).grid(row=16, column=0, sticky="w", padx=20, pady=5)
-measured_torque = tk.Label(root, text="(Real-time data will appear here)", **label_style)
-measured_torque.grid(row=16, column=1, sticky="w", pady=5)
+# Plot/Table Frame
+graph_frame = tk.Frame(root, bg="gray", width=400, height=300)
+graph_frame.grid(row=1, column=3, rowspan=10, padx=20, sticky="n")
 
-# Save Data Button
-save_button = tk.Button(root, text="Save Data", **button_style, command=save_data)
-save_button.grid(row=9, column=1, pady=10)
-
-# Graph/Table Toggle Frame
-graph_frame = tk.Frame(root, bg="gray", width=250, height=200)
-graph_frame.grid(row=1, column=3, rowspan=6, padx=20, sticky="n")
-
-# Create a Figure for Matplotlib Graph
-fig = Figure(figsize=(3, 2), dpi=100)
+fig = Figure(figsize=(5, 4), dpi=100)
 ax = fig.add_subplot(111)
-ax.set_xlabel("Angle of Twist (degrees)")
+ax.set_xlabel("Angle (degrees)")
 ax.set_ylabel("Torque (Nm)")
-
-# Sample Data for Graph
-angles = list(range(0, 100, 10))
-torques = [random.uniform(5, 20) for _ in angles]
-ax.plot(angles, torques, marker="o", linestyle="-", color="blue")
-
-# Embed the Matplotlib Graph in Tkinter
 canvas = FigureCanvasTkAgg(fig, master=graph_frame)
 canvas_widget = canvas.get_tk_widget()
 canvas_widget.pack(fill=tk.BOTH, expand=True)
 
-# Create a Table (Treeview)
 table = ttk.Treeview(graph_frame, columns=("Angle", "Torque"), show="headings")
-table.heading("Angle", text="Angle (degrees)")
+table.heading("Angle", text="Angle (°)")
 table.heading("Torque", text="Torque (Nm)")
-for angle, torque in zip(angles, torques):
-    table.insert("", "end", values=(angle, round(torque, 2)))
 
-# Toggle Button (Now Centered Below Graph)
-is_graph = True  # Default view is graph
-toggle_button = tk.Button(root, text="Switch To Table", **button_style, command=toggle_view)
-toggle_button.grid(row=8, column=3, pady=10, padx=20)  # Centered below graph
+# Toggle Button
+toggle_button = tk.Button(root, text="Switch To Table", command=toggle_view, **button_style)
+toggle_button.grid(row=12, column=3, pady=10)
 
-
-# Run the application
+# Connect and Start GUI
+connect_serial()
 root.mainloop()
-
-
