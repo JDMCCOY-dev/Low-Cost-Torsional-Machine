@@ -26,7 +26,8 @@ float speedDegPerMin = 0.0;
 bool testRunning = false;
 bool directionClockwise = true;
 unsigned long lastDataSendTime = 0;
-const unsigned long dataInterval = 15000; // unit: ms Also controls how fast data is printed to the serial monitor.. currently at 15s
+const unsigned long dataInterval = 200; // unit is ms.. controls rate of angle/torque data output
+float calibrationFactor = 1.0; // Raw reading to torque scale (Nm)
 
 void setup() {
   // Start the serial monitor to show output
@@ -57,27 +58,45 @@ void loop() {
   handleSerial();
 
   position = counter * 0.018347168;  // Convert encoder count to degrees
+  // float torque = qwiicScale.getReading() * calibrationFactor; // Read torque
+  float torque = 0.0;
+  unsigned long start = millis();
+  while (!qwiicScale.available() && (millis() - start < 500)) {
+    // Wait up to 500 ms for reading
+  }
+  if (qwiicScale.available()) {
+    torque = qwiicScale.getReading() * calibrationFactor;
+  } else {
+    Serial.println("Torque read timeout");
+  }
 
   if (testRunning) {
-    // Check if target reached
-    if ((directionClockwise && position >= targetAngle) ||
+    // Check torque limit first
+    if (torque >= 145.0) {
+      motor.setSpeed(0);
+      testRunning = false;
+      Serial.println("Torque limit exceeded! Test Aborted.");
+    }
+    // Check if target angle reached
+    else if ((directionClockwise && position >= targetAngle) ||
         (!directionClockwise && position <= -targetAngle)) {
       motor.setSpeed(0);
       testRunning = false;
       Serial.println("Reached target angle. Test complete.");
-    } else {
-      int speedPWM = (directionClockwise ? 1 : -1) * map(speedDegPerMin, 0, 180, 0, 255);
+    }
+    else {
+      int speedPWM = (directionClockwise ? 1 : -1) * constrain(map(speedDegPerMin, 0, 180, 90, 255), 90, 255);
       motor.setSpeed(speedPWM);
     }
-  }
 
-  // Periodically send data back to GUI
-  if (millis() - lastDataSendTime >= dataInterval) {
-    Serial.print("ANGLE:");
-    Serial.print(position, 2);
-    Serial.print(",TORQUE:");
-    Serial.println(qwiicScale.getReading());
-    lastDataSendTime = millis();
+    // Periodic data print
+    if (millis() - lastDataSendTime >= dataInterval) {
+      Serial.print("ANGLE:");
+      Serial.print(position, 2);
+      Serial.print(",TORQUE:");
+      Serial.println(qwiicScale.getReading() * calibrationFactor, 5); // convert to N*m
+      lastDataSendTime = millis();
+    }
   }
 }
 
@@ -98,8 +117,12 @@ void handleSerial() {
       Serial.println(" deg/min");
     } 
     else if (cmd.startsWith("DIRECTION")) {
-      if (cmd.endsWith("CW")) directionClockwise = true;
-      else if (cmd.endsWith("CCW")) directionClockwise = false;
+      if (cmd.endsWith("CCW")) {
+        directionClockwise = false;
+      }
+      else if (cmd.endsWith("CW")) {
+        directionClockwise = true;
+      }
       Serial.print("Direction Set: ");
       Serial.println(directionClockwise ? "Clockwise" : "Counter-Clockwise");
     }
@@ -115,13 +138,59 @@ void handleSerial() {
       Serial.println("Test stopped");
     } 
     else if (cmd == "TARE") {
-      qwiicScale.calculateZeroOffset();
-      Serial.println("Scale tared");
+      Serial.println("Smart Taring and Calibrating scale... please wait.");
+
+      long avgReading = 0;
+      int sampleCount = 64;
+      int validSamples = 0;
+
+      for (int i = 0; i < sampleCount; i++) {
+        while (qwiicScale.available() == false) {
+          // Wait until a new reading is ready
+        }
+        long reading = qwiicScale.getReading();
+        avgReading += reading;
+        validSamples++;
+        delay(5);
+      }
+
+      if (validSamples > 0) {
+        avgReading /= validSamples;
+        qwiicScale.setZeroOffset(avgReading);
+
+        Serial.print("Smart tare complete. New zero offset = ");
+        Serial.println(avgReading);
+
+        // --- NEW Calibration auto-setup ---
+        delay(100); // short wait
+
+        if (qwiicScale.available()) {
+          long postTareReading = qwiicScale.getReading(); // Read raw sensor output after tare
+          float knownTorque = 0.01; // Nm, your "expected" reading
+          if (postTareReading != 0) {
+            calibrationFactor = knownTorque / postTareReading; // Compute calibration
+            Serial.print("Auto-calibration complete. Calibration factor = ");
+            Serial.println(calibrationFactor, 8);
+          } else {
+            Serial.println("Post-tare reading was zero, skipping calibration.");
+          }
+        } else {
+          Serial.println("No valid reading after tare for calibration.");
+        }
+        // --- End NEW ---
+      } else {
+        Serial.println("Smart tare failed. No valid readings.");
+      }
+    }
+    else if (cmd.startsWith("SET CALIBRATION")) {
+      calibrationFactor = cmd.substring(16).toFloat();
+      Serial.print("Calibration factor set to: ");
+      Serial.println(calibrationFactor, 8);
     }
   }
 }
 
-// Pulled from folder sent from Dr. Elder.. is functionaltiy for reading values from rotary encoder
+// Pulled from folder sent from Dr. Elder.. encoder interrupt handler
 void read_encoder() {
   // Encoder interrupt routine for both pins. Updates counter
   // if they are valid and have rotated a full indent
