@@ -16,6 +16,7 @@ last_command_time = 0
 COMMAND_INTERVAL = 0.1  # seconds
 is_graph = True
 is_angle_graph = True
+is_cw = True
 live_data = []  # Stores (angle, torque) tuples
 serial_connected = False
 start_time = None
@@ -85,6 +86,9 @@ def update_live_data(angle, torque):
         ax.set_xlabel("Angle (degrees)")
         ax.set_ylabel("Torque (Nm)")
         angles, torques = zip(*[(a, t) for a, t, _ in live_data])
+        if not is_cw:
+            for val in angles:
+                val = abs(val)
         ax.plot(angles, torques, marker="o", color="blue")
     else:
         ax.cla()
@@ -128,10 +132,14 @@ def stop_machine():
 def cw_set():
     send_serial_command("DIRECTION CW")
     direction_status.config(text="Clockwise")
+    global is_cw
+    is_cw = True
 
 def ccw_set():
     send_serial_command("DIRECTION CCW")
     direction_status.config(text="Counter-clockwise")
+    global is_cw
+    is_cw = False
 
 def set_target_angle():
     val = angle_entry.get()

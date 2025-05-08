@@ -66,7 +66,7 @@ void loop() {
       testRunning = false;
       Serial.println("Reached target angle. Test complete.");
     } else {
-      int speedPWM = (directionClockwise ? 1 : -1) * map(speedDegPerMin, 0, 180, 0, 255);
+      int speedPWM = (directionClockwise ? 1 : -1) * 2 * constrain(map(speedDegPerMin, 0, 180, 90, 255), 90, 255);
       motor.setSpeed(speedPWM);
     }
   }
