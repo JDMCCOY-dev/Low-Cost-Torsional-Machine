@@ -26,7 +26,7 @@ float speedDegPerMin = 0.0;
 bool testRunning = false;
 bool directionClockwise = true;
 unsigned long lastDataSendTime = 0;
-const unsigned long dataInterval = 5000; // unit is ms.. controls rate of angle/torque data output
+const unsigned long dataInterval = 400; // unit is ms.. controls rate of angle/torque data output
 float calibrationFactor = 1.0; // Raw reading to torque scale (Nm)
 
 void setup() {
@@ -57,8 +57,11 @@ void setup() {
 void loop() {
   handleSerial();
 
-  position = counter * 0.018347168;  // Convert encoder count to degrees
-  float torque = qwiicScale.getReading() * calibrationFactor; // Read torque
+  // degrees_per_count = 360 / 4000 (resolution but interrupts  are on both channels or
+  // library decodes all signal edges) = 0.09
+  position = counter * 0.09; // Convert encoder count to degrees
+  float torque = 0.0;
+  unsigned long start = millis();
 
   if (testRunning) {
     // Check torque limit first
@@ -75,7 +78,10 @@ void loop() {
       Serial.println("Reached target angle. Test complete.");
     }
     else {
-      int speedPWM = (directionClockwise ? 1 : -1) * constrain(map(speedDegPerMin, 0, 180, 90, 255), 90, 255);
+      // New calibrated mapping: speed_to_pwm(speedDegPerMin) min: 1.5 max: 71
+      int rawPWM = (speedDegPerMin + 36.39) / 0.421;
+      int constrainedPWM = constrain(rawPWM, 90, 255);
+      int speedPWM = (directionClockwise ? 1 : -1) * constrainedPWM;
       motor.setSpeed(speedPWM);
     }
 
@@ -156,7 +162,7 @@ void handleSerial() {
 
         if (qwiicScale.available()) {
           long postTareReading = qwiicScale.getReading(); // Read raw sensor output after tare
-          float knownTorque = 1.29; // Nm, your "expected" reading
+          float knownTorque = 0.01; // Nm, your "expected" reading
           if (postTareReading != 0) {
             calibrationFactor = knownTorque / postTareReading; // Compute calibration
             Serial.print("Auto-calibration complete. Calibration factor = ");
