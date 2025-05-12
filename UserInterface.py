@@ -1,14 +1,13 @@
-
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 import serial
 import serial.tools.list_ports
 import threading
 import time
-import csv
-import os
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinter import filedialog
+import csv
 
 # ========== Global Variables ==========
 ser = None
@@ -16,12 +15,12 @@ last_command_time = 0
 COMMAND_INTERVAL = 0.1  # seconds
 is_graph = True
 live_data = []  # Stores (angle, torque) tuples
+is_angle_graph = True
+is_cw = True
 serial_connected = False
-test_active = False
-start_time = 0
-current_time = 0
+start_time = None
 elapsed_time = 0
-file_data = []
+stopwatch_running = False
 
 # ========== Serial Communication ==========
 def connect_serial():
@@ -71,54 +70,79 @@ def read_serial_data():
 
 # ========== Data Handling ==========
 def update_live_data(angle, torque):
-    live_data.append((angle, torque))
+    if stopwatch_running:
+        time_stamp = time.time() - start_time
+    else:
+        time_stamp = elapsed_time  # fallback
+
+    live_data.append((angle, torque, time_stamp))
+
     measured_twist.config(text=f"{angle:.2f} °")
     measured_torque.config(text=f"{torque:.5f} Nm")
-    ax.cla()
-    ax.set_xlabel("Angle (degrees)")
-    ax.set_ylabel("Torque (Nm)")
-    angles, torques = zip(*live_data)
-    ax.plot(angles, torques, marker="o", color="blue")
+
+    if is_angle_graph:
+        ax.cla()
+        ax.set_xlabel("Angle (degrees)")
+        ax.set_ylabel("Torque (Nm)")
+        angles, torques = zip(*[(a, t) for a, t, _ in live_data])
+        if not is_cw:
+            for val in angles:
+                val = abs(val)
+        ax.plot(angles, torques, marker="o", color="blue")
+    else:
+        ax.cla()
+        ax.set_xlabel("Time (seconds)")
+        ax.set_ylabel("Torque (Nm)")
+        times, torques = zip(*[(_, t) for a, t, _ in live_data])
+        ax.plot(times, torques, marker="o", color="blue")
     canvas.draw()
 
-    # Update table
-    table.insert("", "end", values=(f"{angle:.2f}", f"{torque:.5f}"))
+    # update table
+    row_id = table.insert("", "end", values=(f"{angle:.2f}", f"{torque:.5f}", f"{time_stamp:.2f}"))
+    table.see(row_id)
 
-    # Update data file
-    if test_active:
-        try:
-            global current_time
-            current_time = time.time()
-            global elapsed_time
-            elapsed_time = current_time - start_time
-            global file_data
-            file_data.append({"Time (seconds)": elapsed_time, "Angle (degrees)": angle, "Measured Torque (Nm)": torque})
-        except:
-            pass
 
+def start_stopwatch():
+    global start_time, stopwatch_running
+    start_time = time.time()
+    stopwatch_running = True
+    update_stopwatch()
+
+def stop_stopwatch():
+    global stopwatch_running
+    stopwatch_running = False
+
+def update_stopwatch():
+    if stopwatch_running:
+        global elapsed_time
+        elapsed_time = time.time() - start_time
+        time_elapsed_label.config(text=f"{elapsed_time:.2f} s")
+        root.after(100, update_stopwatch)
 
 # ========== GUI Functions ==========
 def start_machine():
+    try:
+        float(angle_entry.get())  # Ensure value is set
+        float(speed_entry.get())  # Ensure value is set
+    except ValueError:
+        messagebox.showwarning("Input Missing", "Please set angle and speed first.")
+        return
+
     send_serial_command("START")
-    global file_data 
-    file_data = []
-    global start_time
-    start_time = time.time()
-    global test_active 
-    test_active = True
+    start_stopwatch()
+
 
 def stop_machine():
     send_serial_command("STOP")
-    global test_active
-    test_active = False
+    stop_stopwatch()
 
 def cw_set():
     send_serial_command("DIRECTION CW")
-    direction_status.config(text="Direction: Clockwise")
+    direction_status.config(text="Clockwise")
 
 def ccw_set():
     send_serial_command("DIRECTION CCW")
-    direction_status.config(text="Direction: Counter-clockwise")
+    direction_status.config(text="Counter-clockwise")
 
 def set_target_angle():
     val = angle_entry.get()
@@ -161,31 +185,46 @@ def toggle_view():
         toggle_button.config(text="Switch To Table")
     is_graph = not is_graph
 
-# Define Save Button Function
-def save_data():
-    file = filedialog.asksaveasfile(initialdir="Desktop",
+def toggle_graph_type():
+    global is_angle_graph
+    if is_graph:
+        if is_angle_graph:
+            toggle_graph_button.config(text="(Graph) Angle/Torque")
+        else:
+            toggle_graph_button.config(text="(Graph) Time/Torque")
+        is_angle_graph = not is_angle_graph
+    else:
+        messagebox.showinfo("Graph Not Active", "Switch to graph to change graph type.")
 
-                                    defaultextension='.csv',
+def erase_graph_and_table():
+    global live_data
+    live_data.clear()
+    ax.cla()
+    ax.set_xlabel("Angle (degrees)")
+    ax.set_ylabel("Torque (Nm)")
+    canvas.draw()
+    for row in table.get_children():
+        table.delete(row)
 
-                                    filetypes=[
-
-                                        (".csv file (.csv)", ".csv"),
-
-                                        ("Text file (.txt)",".txt"),
-
-                                        ("All files", ".*"),
-
-                                    ])
-
-    if file is None:
+def save_data_to_csv():
+    if not live_data:
+        messagebox.showinfo("No Data", "There is no data to save.")
         return
-    filename = os.path.basename(file.name)
-    with open(filename, "w", newline="") as csvfile:
-        fieldnames = ["Time (seconds)", "Angle (degrees)", "Measured Torque (Nm)"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(file_data)
 
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv")],
+        title="Save data as..."
+    )
+    if file_path:
+        try:
+            with open(file_path, mode='w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(["Angle (°)", "Torque (Nm)", "Time (s)"])
+                writer.writerows(live_data)
+            messagebox.showinfo("Success", f"Data saved to:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save file:\n{e}")
 
 # ========== GUI Setup ==========
 root = tk.Tk()
@@ -215,46 +254,53 @@ tk.Button(direction_frame, text="Counter-Clockwise", command=ccw_set, **button_s
 tk.Label(root, text="Target Angle (°):", **label_style).grid(row=3, column=0, sticky="w", padx=20)
 angle_entry = tk.Entry(root, **entry_style)
 angle_entry.grid(row=3, column=1)
-tk.Button(root, text="Set", command=set_target_angle, **button_style).grid(row=3, column=2, padx=10)
+tk.Button(root, text="Set", command=set_target_angle, **button_style).grid(row=3, column=2, padx=10, pady=(0,5))
 
 tk.Label(root, text="Speed (°/min):", **label_style).grid(row=4, column=0, sticky="w", padx=20)
 speed_entry = tk.Entry(root, **entry_style)
 speed_entry.grid(row=4, column=1)
-tk.Button(root, text="Set", command=set_target_speed, **button_style).grid(row=4, column=2, padx=10)
+tk.Button(root, text="Set", command=set_target_speed, **button_style).grid(row=4, column=2, padx=10, pady=(0,5))
 
 tk.Label(root, text="Calibration Factor:", **label_style).grid(row=5, column=0, sticky="w", padx=20)
 calibration_entry = tk.Entry(root, **entry_style)
 calibration_entry.grid(row=5, column=1)
-tk.Button(root, text="Set", command=set_calibration_factor, **button_style).grid(row=5, column=2, padx=10)
+tk.Button(root, text="Set", command=set_calibration_factor, **button_style).grid(row=5, column=2, padx=10, pady=(0,5))
 
 tk.Button(root, text="Tare Torque", command=tare_torque, **button_style).grid(row=6, column=1, pady=10)
 
-# Start/Stop
+# Start/Stop/Clear
 start_stop_frame = tk.Frame(root, bg="black")
 start_stop_frame.grid(row=7, column=0, columnspan=3, pady=10)
 tk.Button(start_stop_frame, text="Start Test", command=start_machine, **button_style).pack(side=tk.LEFT, padx=5)
 tk.Button(start_stop_frame, text="Stop Test", command=stop_machine, **button_style).pack(side=tk.LEFT, padx=5)
-tk.Button(start_stop_frame, text="Save Data", command=save_data, **button_style).pack(side=tk.LEFT, padx=5)
+tk.Button(start_stop_frame, text="Erase Graph/Table", command=erase_graph_and_table, **button_style).pack(side=tk.LEFT, padx=5)
 
 # Live Data
-tk.Label(root, text="Measured Angle of Twist:", **label_style).grid(row=8, column=0, sticky="w", padx=20)
-measured_twist = tk.Label(root, text="0.00 °", **label_style)
-measured_twist.grid(row=8, column=1, sticky="w")
+info_frame = tk.Frame(root, bg="black")
+info_frame.grid(row=8, column=0, columnspan=2, sticky="w", padx=30)
+tk.Label(info_frame, text="Measured Angle of Twist:", **label_style).grid(row=0, column=0, sticky="w")
+measured_twist = tk.Label(info_frame, text="0.00 °", **label_style)
+measured_twist.grid(row=0, column=1, sticky="w")
 
-tk.Label(root, text="Measured Torque:", **label_style).grid(row=9, column=0, sticky="w", padx=20)
-measured_torque = tk.Label(root, text="0.00000 Nm", **label_style)
-measured_torque.grid(row=9, column=1, sticky="w")
+tk.Label(info_frame, text="Measured Torque:", **label_style).grid(row=1, column=0, sticky="w")
+measured_torque = tk.Label(info_frame, text="0.00000 Nm", **label_style)
+measured_torque.grid(row=1, column=1, sticky="w")
 
-tk.Label(root, text="Target Angle:", **label_style).grid(row=10, column=0, sticky="w", padx=20)
-target_angle_label = tk.Label(root, text="0.00 °", **label_style)
-target_angle_label.grid(row=10, column=1, sticky="w")
+tk.Label(info_frame, text="Time Elapsed:", **label_style).grid(row=2, column=0, sticky="w")
+time_elapsed_label = tk.Label(info_frame, text="0.00 s", **label_style)
+time_elapsed_label.grid(row=2, column=1, sticky="w")
 
-tk.Label(root, text="Set Speed:", **label_style).grid(row=11, column=0, sticky="w", padx=20)
-target_speed_label = tk.Label(root, text="0.00 °/min", **label_style)
-target_speed_label.grid(row=11, column=1, sticky="w")
+tk.Label(info_frame, text="Target Angle:", **label_style).grid(row=3, column=0, sticky="w")
+target_angle_label = tk.Label(info_frame, text="0.00 °", **label_style)
+target_angle_label.grid(row=3, column=1, sticky="w")
 
-direction_status = tk.Label(root, text="Direction: Not Set", **label_style)
-direction_status.grid(row=12, column=1, sticky="w", padx=10)
+tk.Label(info_frame, text="Set Speed:", **label_style).grid(row=4, column=0, sticky="w")
+target_speed_label = tk.Label(info_frame, text="0.00 °/min", **label_style)
+target_speed_label.grid(row=4, column=1, sticky="w")
+
+tk.Label(info_frame, text="Direction: ", **label_style).grid(row=5, column=0, sticky="w")
+direction_status = tk.Label(info_frame, text="Not Set", **label_style)
+direction_status.grid(row=5, column=1, sticky="w")
 
 # Plot/Table Frame
 graph_frame = tk.Frame(root, bg="gray", width=400, height=300)
@@ -268,13 +314,21 @@ canvas = FigureCanvasTkAgg(fig, master=graph_frame)
 canvas_widget = canvas.get_tk_widget()
 canvas_widget.pack(fill=tk.BOTH, expand=True)
 
-table = ttk.Treeview(graph_frame, columns=("Angle", "Torque"), show="headings")
+table = ttk.Treeview(graph_frame, columns=("Angle", "Torque", "Time"), show="headings")
 table.heading("Angle", text="Angle (°)")
 table.heading("Torque", text="Torque (Nm)")
+table.heading("Time", text="Time (s)")
 
 # Toggle Button
 toggle_button = tk.Button(root, text="Switch To Table", command=toggle_view, **button_style)
 toggle_button.grid(row=12, column=3, pady=10)
+
+# Toggle Graph between angle/torque and time/torque
+toggle_graph_button = tk.Button(root, text="(Graph) Time/Torque", command=toggle_graph_type, **button_style)
+toggle_graph_button.grid(row=13, column=3, pady=10)
+
+# Save Data Button
+tk.Button(root, text="Save Data", command=save_data_to_csv, **button_style).grid(row=14, column=3, pady=5)
 
 # Connect and Start GUI
 connect_serial()
