@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import serial
@@ -110,8 +109,16 @@ def update_stopwatch():
 
 # ========== GUI Functions ==========
 def start_machine():
+    try:
+        float(angle_entry.get())  # Ensure value is set
+        float(speed_entry.get())  # Ensure value is set
+    except ValueError:
+        messagebox.showwarning("Input Missing", "Please set angle and speed first.")
+        return
+
     send_serial_command("START")
     start_stopwatch()
+
 
 def stop_machine():
     send_serial_command("STOP")
