@@ -93,7 +93,7 @@ def update_live_data(angle, torque):
         ax.cla()
         ax.set_xlabel("Time (seconds)")
         ax.set_ylabel("Torque (Nm)")
-        times, torques = zip(*[(_, t) for a, t, _ in live_data])
+        times, torques = zip(*[(time, torque) for _, torque, time in live_data])
         ax.plot(times, torques, marker="o", color="blue")
     canvas.draw()
 
