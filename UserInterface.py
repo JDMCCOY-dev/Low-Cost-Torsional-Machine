@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import serial
@@ -16,6 +15,8 @@ last_command_time = 0
 COMMAND_INTERVAL = 0.1  # seconds
 is_graph = True
 live_data = []  # Stores (angle, torque) tuples
+is_angle_graph = True
+is_cw = True
 serial_connected = False
 start_time = None
 elapsed_time = 0
@@ -79,11 +80,21 @@ def update_live_data(angle, torque):
     measured_twist.config(text=f"{angle:.2f} °")
     measured_torque.config(text=f"{torque:.5f} Nm")
 
-    ax.cla()
-    ax.set_xlabel("Angle (degrees)")
-    ax.set_ylabel("Torque (Nm)")
-    angles, torques = zip(*[(a, t) for a, t, _ in live_data])
-    ax.plot(angles, torques, marker="o", color="blue")
+    if is_angle_graph:
+        ax.cla()
+        ax.set_xlabel("Angle (degrees)")
+        ax.set_ylabel("Torque (Nm)")
+        angles, torques = zip(*[(a, t) for a, t, _ in live_data])
+        if not is_cw:
+            for val in angles:
+                val = abs(val)
+        ax.plot(angles, torques, marker="o", color="blue")
+    else:
+        ax.cla()
+        ax.set_xlabel("Time (seconds)")
+        ax.set_ylabel("Torque (Nm)")
+        times, torques = zip(*[(_, t) for a, t, _ in live_data])
+        ax.plot(times, torques, marker="o", color="blue")
     canvas.draw()
 
     # update table
@@ -173,6 +184,17 @@ def toggle_view():
         canvas_widget.pack(fill=tk.BOTH, expand=True)
         toggle_button.config(text="Switch To Table")
     is_graph = not is_graph
+
+def toggle_graph_type():
+    global is_angle_graph
+    if is_graph:
+        if is_angle_graph:
+            toggle_graph_button.config(text="(Graph) Angle/Torque")
+        else:
+            toggle_graph_button.config(text="(Graph) Time/Torque")
+        is_angle_graph = not is_angle_graph
+    else:
+        messagebox.showinfo("Graph Not Active", "Switch to graph to change graph type.")
 
 def erase_graph_and_table():
     global live_data
@@ -301,8 +323,12 @@ table.heading("Time", text="Time (s)")
 toggle_button = tk.Button(root, text="Switch To Table", command=toggle_view, **button_style)
 toggle_button.grid(row=12, column=3, pady=10)
 
+# Toggle Graph between angle/torque and time/torque
+toggle_graph_button = tk.Button(root, text="(Graph) Time/Torque", command=toggle_graph_type, **button_style)
+toggle_graph_button.grid(row=13, column=3, pady=10)
+
 # Save Data Button
-tk.Button(root, text="Save Data", command=save_data_to_csv, **button_style).grid(row=13, column=3, pady=5)
+tk.Button(root, text="Save Data", command=save_data_to_csv, **button_style).grid(row=14, column=3, pady=5)
 
 # Connect and Start GUI
 connect_serial()
